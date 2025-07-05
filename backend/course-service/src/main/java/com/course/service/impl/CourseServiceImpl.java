@@ -8,6 +8,7 @@ import com.course.mapper.CourseMapper;
 import com.course.repository.CourseRepository;
 import com.course.service.CourseService;
 import com.course.service.GymIntegrationService;
+import com.course.service.KafkaProducerService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,22 +31,59 @@ public class CourseServiceImpl implements CourseService {
     @Autowired
     private GymIntegrationService gymIntegrationService;
 
+    @Autowired
+    private KafkaProducerService kafkaProducerService;
+
     @Override
     public CourseDTO create(CourseDTO courseDTO) {
         logger.info("Création d'un nouveau cours: {}", courseDTO.getTitle());
 
+        String gymName = null;
+        
         // Validation de la salle si spécifiée
         if (courseDTO.getGymId() != null && !courseDTO.getGymId().isEmpty()) {
             if (!gymIntegrationService.validateGymExists(courseDTO.getGymId())) {
                 throw new RuntimeException("La salle spécifiée n'existe pas ou est indisponible: " + courseDTO.getGymId());
             }
+            
+            // Récupérer le nom de la salle pour l'événement
+            try {
+                GymDTO gym = gymIntegrationService.getGymInfoForCourse(courseDTO.getGymId());
+                gymName = gym.getName();
+            } catch (Exception e) {
+                logger.warn("Impossible de récupérer le nom de la salle {}: {}", courseDTO.getGymId(), e.getMessage());
+                gymName = "Salle inconnue";
+            }
         }
 
         Course course = mapper.toEntity(courseDTO);
         course = repository.save(course);
-        logger.info("Cours créé avec succès, ID: {}", course.getId());
+        CourseDTO result = mapper.toDto(course);
         
-        return mapper.toDto(course);
+        // Publier l'événement Kafka de création
+        kafkaProducerService.publishCourseCreated(
+            result.getId(),
+            result.getTitle(),
+            result.getInstructor(),
+            result.getGymId(),
+            gymName,
+            result.getMaxParticipants(),
+            result.getPrice(),
+            result.getLevel()
+        );
+        
+        // Si le cours est assigné à une salle, publier l'événement d'assignation
+        if (result.getGymId() != null && gymName != null) {
+            kafkaProducerService.publishCourseAssignedToGym(
+                result.getId(),
+                result.getTitle(),
+                result.getGymId(),
+                gymName
+            );
+        }
+        
+        logger.info("Cours créé avec succès, ID: {}", course.getId());
+        return result;
     }
 
     @Override
@@ -55,11 +93,36 @@ public class CourseServiceImpl implements CourseService {
         Course existing = repository.findById(id)
             .orElseThrow(() -> new RuntimeException("Course not found"));
 
+        String oldGymId = existing.getGymId();
+        String newGymId = courseDTO.getGymId();
+        String oldGymName = null;
+        String newGymName = null;
+
+        // Récupérer le nom de l'ancienne salle si elle existe
+        if (oldGymId != null) {
+            try {
+                GymDTO oldGym = gymIntegrationService.getGymInfoForCourse(oldGymId);
+                oldGymName = oldGym.getName();
+            } catch (Exception e) {
+                logger.warn("Impossible de récupérer l'ancienne salle {}: {}", oldGymId, e.getMessage());
+                oldGymName = "Salle inconnue";
+            }
+        }
+
         // Validation de la nouvelle salle si changée
-        if (courseDTO.getGymId() != null && !courseDTO.getGymId().isEmpty()) {
-            if (!courseDTO.getGymId().equals(existing.getGymId())) {
-                if (!gymIntegrationService.validateGymExists(courseDTO.getGymId())) {
-                    throw new RuntimeException("La nouvelle salle spécifiée n'existe pas: " + courseDTO.getGymId());
+        if (newGymId != null && !newGymId.isEmpty()) {
+            if (!newGymId.equals(oldGymId)) {
+                if (!gymIntegrationService.validateGymExists(newGymId)) {
+                    throw new RuntimeException("La nouvelle salle spécifiée n'existe pas: " + newGymId);
+                }
+                
+                // Récupérer le nom de la nouvelle salle
+                try {
+                    GymDTO newGym = gymIntegrationService.getGymInfoForCourse(newGymId);
+                    newGymName = newGym.getName();
+                } catch (Exception e) {
+                    logger.warn("Impossible de récupérer la nouvelle salle {}: {}", newGymId, e.getMessage());
+                    newGymName = "Salle inconnue";
                 }
             }
         }
@@ -76,15 +139,82 @@ public class CourseServiceImpl implements CourseService {
         existing.setGymId(courseDTO.getGymId());
 
         existing = repository.save(existing);
-        logger.info("Cours mis à jour avec succès");
+        CourseDTO result = mapper.toDto(existing);
         
-        return mapper.toDto(existing);
+        // Publier l'événement de mise à jour
+        kafkaProducerService.publishCourseUpdated(
+            result.getId(),
+            result.getTitle(),
+            result.getInstructor(),
+            result.getGymId(),
+            newGymName != null ? newGymName : oldGymName,
+            result.getMaxParticipants(),
+            result.getPrice(),
+            result.getLevel()
+        );
+        
+        // Gérer les changements d'assignation de salle
+        if (!java.util.Objects.equals(oldGymId, newGymId)) {
+            // Désassignation de l'ancienne salle
+            if (oldGymId != null) {
+                kafkaProducerService.publishCourseUnassignedFromGym(
+                    result.getId(),
+                    result.getTitle(),
+                    oldGymId,
+                    oldGymName
+                );
+            }
+            
+            // Assignation à la nouvelle salle
+            if (newGymId != null) {
+                kafkaProducerService.publishCourseAssignedToGym(
+                    result.getId(),
+                    result.getTitle(),
+                    newGymId,
+                    newGymName
+                );
+            }
+        }
+        
+        logger.info("Cours mis à jour avec succès");
+        return result;
     }
 
     @Override
     public void delete(Long id) {
         logger.info("Suppression du cours ID: {}", id);
+        
+        // Récupérer les infos avant suppression pour l'événement
+        Course course = repository.findById(id)
+            .orElseThrow(() -> new RuntimeException("Course not found"));
+        
+        String gymName = null;
+        if (course.getGymId() != null) {
+            try {
+                GymDTO gym = gymIntegrationService.getGymInfoForCourse(course.getGymId());
+                gymName = gym.getName();
+            } catch (Exception e) {
+                logger.warn("Impossible de récupérer la salle pour le cours à supprimer: {}", e.getMessage());
+                gymName = "Salle inconnue";
+            }
+        }
+        
+        // Supprimer le cours
         repository.deleteById(id);
+        
+        // Publier l'événement de suppression
+        kafkaProducerService.publishCourseDeleted(course.getId(), course.getTitle());
+        
+        // Si le cours était assigné à une salle, publier l'événement de désassignation
+        if (course.getGymId() != null) {
+            kafkaProducerService.publishCourseUnassignedFromGym(
+                course.getId(),
+                course.getTitle(),
+                course.getGymId(),
+                gymName
+            );
+        }
+        
         logger.info("Cours supprimé avec succès");
     }
 
