@@ -36,6 +36,8 @@ public class Course {
 
     private String gymId; // ID de la salle de sport
 
+    private String gymName; // NOM de la salle de sport
+
     // Constructeurs
     public Course() {}
 
@@ -69,4 +71,7 @@ public class Course {
 
     public String getGymId() { return gymId; }
     public void setGymId(String gymId) { this.gymId = gymId; }
+
+    public String getGymName() { return gymName; }
+    public void setGymName(String gymName) { this.gymName = gymName; }
 }

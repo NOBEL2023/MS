@@ -40,19 +40,21 @@ public class CourseServiceImpl implements CourseService {
 
         String gymName = null;
         
-        // Validation de la salle si spécifiée
+        // Validation et récupération du nom de la salle si spécifiée
         if (courseDTO.getGymId() != null && !courseDTO.getGymId().isEmpty()) {
             if (!gymIntegrationService.validateGymExists(courseDTO.getGymId())) {
                 throw new RuntimeException("La salle spécifiée n'existe pas ou est indisponible: " + courseDTO.getGymId());
             }
             
-            // Récupérer le nom de la salle pour l'événement
+            // Récupérer le nom de la salle
             try {
                 GymDTO gym = gymIntegrationService.getGymInfoForCourse(courseDTO.getGymId());
                 gymName = gym.getName();
+                courseDTO.setGymName(gymName); // Définir le nom dans le DTO
             } catch (Exception e) {
                 logger.warn("Impossible de récupérer le nom de la salle {}: {}", courseDTO.getGymId(), e.getMessage());
                 gymName = "Salle inconnue";
+                courseDTO.setGymName(gymName);
             }
         }
 
@@ -66,23 +68,23 @@ public class CourseServiceImpl implements CourseService {
             result.getTitle(),
             result.getInstructor(),
             result.getGymId(),
-            gymName,
+            result.getGymName(),
             result.getMaxParticipants(),
             result.getPrice(),
             result.getLevel()
         );
         
         // Si le cours est assigné à une salle, publier l'événement d'assignation
-        if (result.getGymId() != null && gymName != null) {
+        if (result.getGymId() != null && result.getGymName() != null) {
             kafkaProducerService.publishCourseAssignedToGym(
                 result.getId(),
                 result.getTitle(),
                 result.getGymId(),
-                gymName
+                result.getGymName()
             );
         }
         
-        logger.info("Cours créé avec succès, ID: {}", course.getId());
+        logger.info("Cours créé avec succès, ID: {}, Salle: {}", course.getId(), result.getGymName());
         return result;
     }
 
@@ -94,22 +96,11 @@ public class CourseServiceImpl implements CourseService {
             .orElseThrow(() -> new RuntimeException("Course not found"));
 
         String oldGymId = existing.getGymId();
+        String oldGymName = existing.getGymName();
         String newGymId = courseDTO.getGymId();
-        String oldGymName = null;
         String newGymName = null;
 
-        // Récupérer le nom de l'ancienne salle si elle existe
-        if (oldGymId != null) {
-            try {
-                GymDTO oldGym = gymIntegrationService.getGymInfoForCourse(oldGymId);
-                oldGymName = oldGym.getName();
-            } catch (Exception e) {
-                logger.warn("Impossible de récupérer l'ancienne salle {}: {}", oldGymId, e.getMessage());
-                oldGymName = "Salle inconnue";
-            }
-        }
-
-        // Validation de la nouvelle salle si changée
+        // Validation et récupération du nom de la nouvelle salle si changée
         if (newGymId != null && !newGymId.isEmpty()) {
             if (!newGymId.equals(oldGymId)) {
                 if (!gymIntegrationService.validateGymExists(newGymId)) {
@@ -124,6 +115,9 @@ public class CourseServiceImpl implements CourseService {
                     logger.warn("Impossible de récupérer la nouvelle salle {}: {}", newGymId, e.getMessage());
                     newGymName = "Salle inconnue";
                 }
+            } else {
+                // Même salle, garder le nom existant ou le mettre à jour si fourni
+                newGymName = courseDTO.getGymName() != null ? courseDTO.getGymName() : oldGymName;
             }
         }
 
@@ -137,6 +131,7 @@ public class CourseServiceImpl implements CourseService {
         existing.setSchedule(courseDTO.getSchedule());
         existing.setLevel(courseDTO.getLevel());
         existing.setGymId(courseDTO.getGymId());
+        existing.setGymName(newGymName);
 
         existing = repository.save(existing);
         CourseDTO result = mapper.toDto(existing);
@@ -147,7 +142,7 @@ public class CourseServiceImpl implements CourseService {
             result.getTitle(),
             result.getInstructor(),
             result.getGymId(),
-            newGymName != null ? newGymName : oldGymName,
+            result.getGymName(),
             result.getMaxParticipants(),
             result.getPrice(),
             result.getLevel()
@@ -176,7 +171,7 @@ public class CourseServiceImpl implements CourseService {
             }
         }
         
-        logger.info("Cours mis à jour avec succès");
+        logger.info("Cours mis à jour avec succès: {} - Salle: {}", result.getTitle(), result.getGymName());
         return result;
     }
 
@@ -187,17 +182,6 @@ public class CourseServiceImpl implements CourseService {
         // Récupérer les infos avant suppression pour l'événement
         Course course = repository.findById(id)
             .orElseThrow(() -> new RuntimeException("Course not found"));
-        
-        String gymName = null;
-        if (course.getGymId() != null) {
-            try {
-                GymDTO gym = gymIntegrationService.getGymInfoForCourse(course.getGymId());
-                gymName = gym.getName();
-            } catch (Exception e) {
-                logger.warn("Impossible de récupérer la salle pour le cours à supprimer: {}", e.getMessage());
-                gymName = "Salle inconnue";
-            }
-        }
         
         // Supprimer le cours
         repository.deleteById(id);
@@ -211,11 +195,11 @@ public class CourseServiceImpl implements CourseService {
                 course.getId(),
                 course.getTitle(),
                 course.getGymId(),
-                gymName
+                course.getGymName()
             );
         }
         
-        logger.info("Cours supprimé avec succès");
+        logger.info("Cours supprimé avec succès: {} - Salle: {}", course.getTitle(), course.getGymName());
     }
 
     @Override
@@ -276,8 +260,25 @@ public class CourseServiceImpl implements CourseService {
         enrichedCourse.setLevel(course.getLevel());
         enrichedCourse.setGymId(course.getGymId());
 
-        // Enrichissement avec les informations de la salle
-        if (course.getGymId() != null && !course.getGymId().isEmpty()) {
+        // Utiliser le nom stocké en base ou enrichir si nécessaire
+        if (course.getGymName() != null && !course.getGymName().isEmpty()) {
+            enrichedCourse.setGymName(course.getGymName());
+            
+            // Enrichir avec les informations supplémentaires de la salle si disponible
+            if (course.getGymId() != null) {
+                try {
+                    GymDTO gym = gymIntegrationService.getGymInfoForCourse(course.getGymId());
+                    enrichedCourse.setGymLocation(gym.getLocation());
+                    enrichedCourse.setGymCapacity(gym.getCapacity());
+                } catch (Exception e) {
+                    logger.warn("Impossible d'enrichir le cours {} avec les infos détaillées de la salle {}: {}", 
+                        course.getId(), course.getGymId(), e.getMessage());
+                    enrichedCourse.setGymLocation("Information indisponible");
+                    enrichedCourse.setGymCapacity(0);
+                }
+            }
+        } else if (course.getGymId() != null) {
+            // Fallback: récupérer les infos via OpenFeign si le nom n'est pas stocké
             try {
                 GymDTO gym = gymIntegrationService.getGymInfoForCourse(course.getGymId());
                 enrichedCourse.setGymName(gym.getName());

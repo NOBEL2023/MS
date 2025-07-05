@@ -14,7 +14,7 @@ import org.springframework.stereotype.Service;
 
 /**
  * Service pour consommer des messages Kafka
- * Écoute les événements du Gym Service
+ * Écoute les événements du Gym Service et met à jour les noms de salles
  */
 @Service
 public class KafkaConsumerService {
@@ -111,7 +111,8 @@ public class KafkaConsumerService {
      * Traiter un événement de salle
      */
     private void processGymEvent(GymEvent gymEvent) {
-        logger.info("Traitement événement {} pour salle {}", gymEvent.getEventType(), gymEvent.getGymId());
+        logger.info("Traitement événement {} pour salle {} ({})", 
+            gymEvent.getEventType(), gymEvent.getGymId(), gymEvent.getGymName());
         
         switch (gymEvent.getEventType()) {
             case GYM_CREATED:
@@ -157,9 +158,23 @@ public class KafkaConsumerService {
     private void handleGymUpdated(GymEvent gymEvent) {
         logger.info("Salle mise à jour: {} ({})", gymEvent.getGymName(), gymEvent.getGymId());
         
-        // Mettre à jour les informations locales si nécessaire
-        // Invalider les caches
-        // Notifier les cours concernés
+        // IMPORTANT: Mettre à jour le nom de la salle dans tous les cours associés
+        try {
+            int updatedCourses = courseRepository.findByGymId(gymEvent.getGymId()).size();
+            
+            if (updatedCourses > 0) {
+                courseRepository.updateGymNameByGymId(gymEvent.getGymId(), gymEvent.getGymName());
+                logger.info("Nom de salle mis à jour pour {} cours: {} -> {}", 
+                    updatedCourses, gymEvent.getGymId(), gymEvent.getGymName());
+                
+                // Publier une notification de synchronisation
+                kafkaProducerService.sendNotification("sync", 
+                    String.format("Nom de salle synchronisé pour %d cours: %s", 
+                        updatedCourses, gymEvent.getGymName()));
+            }
+        } catch (Exception e) {
+            logger.error("Erreur lors de la mise à jour du nom de salle pour les cours: {}", e.getMessage());
+        }
     }
 
     /**
@@ -172,25 +187,28 @@ public class KafkaConsumerService {
         var coursesToUpdate = courseRepository.findByGymId(gymEvent.getGymId());
         
         if (!coursesToUpdate.isEmpty()) {
-            logger.info("Désassociation de {} cours de la salle supprimée", coursesToUpdate.size());
+            logger.info("Désassociation de {} cours de la salle supprimée: {}", 
+                coursesToUpdate.size(), gymEvent.getGymName());
             
+            // Publier les événements de désassociation pour chaque cours
             coursesToUpdate.forEach(course -> {
-                String oldGymName = gymEvent.getGymName();
-                
-                // Publier un événement de désassociation
                 kafkaProducerService.publishCourseUnassignedFromGym(
                     course.getId(), 
                     course.getTitle(), 
                     gymEvent.getGymId(), 
-                    oldGymName
+                    gymEvent.getGymName()
                 );
-                
-                // Retirer l'association
-                course.setGymId(null);
-                courseRepository.save(course);
             });
             
-            logger.info("Tous les cours ont été désassociés de la salle supprimée");
+            // Supprimer les associations en base
+            courseRepository.removeGymAssociationByGymId(gymEvent.getGymId());
+            
+            logger.info("Tous les cours ont été désassociés de la salle supprimée: {}", gymEvent.getGymName());
+            
+            // Notification globale
+            kafkaProducerService.sendNotification("system", 
+                String.format("Salle supprimée: %s - %d cours désassociés", 
+                    gymEvent.getGymName(), coursesToUpdate.size()));
         }
     }
 
@@ -214,8 +232,9 @@ public class KafkaConsumerService {
                 
                 // Publier une notification d'alerte
                 kafkaProducerService.sendNotification(course.getId().toString(),
-                    String.format("ALERTE: Le cours %s dépasse la capacité de la salle %s", 
-                        course.getTitle(), gymEvent.getGymName()));
+                    String.format("ALERTE: Le cours %s dépasse la capacité de la salle %s (%d > %d)", 
+                        course.getTitle(), gymEvent.getGymName(), 
+                        course.getMaxParticipants(), gymEvent.getCapacity()));
             }
         });
     }

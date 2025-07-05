@@ -14,5 +14,6 @@ public interface CourseService {
     List<CourseDTO> getAll();
     List<CourseWithGymDTO> getAllCoursesWithGymInfo();
     List<CourseDTO> getCoursesByGymId(String gymId);
+    List<CourseDTO> getCoursesByGymName(String gymName);
     List<GymDTO> getAvailableGyms();
 }

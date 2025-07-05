@@ -58,11 +58,19 @@ public class CourseController {
     }
 
     /**
-     * Récupère les cours d'une salle spécifique
+     * Récupère les cours d'une salle spécifique par ID
      */
     @GetMapping("/by-gym/{gymId}")
     public ResponseEntity<List<CourseDTO>> getCoursesByGym(@PathVariable String gymId) {
         return ResponseEntity.ok(courseService.getCoursesByGymId(gymId));
+    }
+
+    /**
+     * Récupère les cours d'une salle spécifique par nom
+     */
+    @GetMapping("/by-gym-name/{gymName}")
+    public ResponseEntity<List<CourseDTO>> getCoursesByGymName(@PathVariable String gymName) {
+        return ResponseEntity.ok(courseService.getCoursesByGymName(gymName));
     }
 
     /**

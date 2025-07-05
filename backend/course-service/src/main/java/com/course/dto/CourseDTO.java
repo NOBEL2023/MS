@@ -26,6 +26,7 @@ public class CourseDTO {
     private String schedule;
     private String level;
     private String gymId;
+    private String gymName; // Ajout du nom de la salle
 
     // Constructeurs
     public CourseDTO() {}
@@ -60,4 +61,7 @@ public class CourseDTO {
 
     public String getGymId() { return gymId; }
     public void setGymId(String gymId) { this.gymId = gymId; }
+
+    public String getGymName() { return gymName; }
+    public void setGymName(String gymName) { this.gymName = gymName; }
 }
