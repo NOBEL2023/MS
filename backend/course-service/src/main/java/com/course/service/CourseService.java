@@ -1,6 +1,9 @@
 package com.course.service;
 
 import com.course.dto.CourseDTO;
+import com.course.dto.CourseWithGymDTO;
+import com.course.dto.GymDTO;
+
 import java.util.List;
 
 public interface CourseService {
@@ -9,4 +12,7 @@ public interface CourseService {
     void delete(Long id);
     CourseDTO getById(Long id);
     List<CourseDTO> getAll();
+    List<CourseWithGymDTO> getAllCoursesWithGymInfo();
+    List<CourseDTO> getCoursesByGymId(String gymId);
+    List<GymDTO> getAvailableGyms();
 }

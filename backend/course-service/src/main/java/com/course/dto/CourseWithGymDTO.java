@@ -1,43 +1,26 @@
-package com.course.entity;
-
-import jakarta.persistence.*;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Positive;
+package com.course.dto;
 
 import java.math.BigDecimal;
 
-@Entity
-@Table(name = "courses")
-public class Course {
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+public class CourseWithGymDTO {
     private Long id;
-
-    @NotBlank
     private String title;
-
     private String description;
-
     private String instructor;
-
-    @Positive
-    private Integer duration; // en minutes
-
-    @Positive
+    private Integer duration;
     private Integer maxParticipants;
-
-    @Positive
     private BigDecimal price;
-
-    private String schedule; // ex: "Lundi 18h00"
-
-    private String level; // Débutant, Intermédiaire, Avancé
-
-    private String gymId; // ID de la salle de sport
+    private String schedule;
+    private String level;
+    private String gymId;
+    
+    // Informations enrichies de la salle
+    private String gymName;
+    private String gymLocation;
+    private Integer gymCapacity;
 
     // Constructeurs
-    public Course() {}
+    public CourseWithGymDTO() {}
 
     // Getters et Setters
     public Long getId() { return id; }
@@ -69,4 +52,13 @@ public class Course {
 
     public String getGymId() { return gymId; }
     public void setGymId(String gymId) { this.gymId = gymId; }
+
+    public String getGymName() { return gymName; }
+    public void setGymName(String gymName) { this.gymName = gymName; }
+
+    public String getGymLocation() { return gymLocation; }
+    public void setGymLocation(String gymLocation) { this.gymLocation = gymLocation; }
+
+    public Integer getGymCapacity() { return gymCapacity; }
+    public void setGymCapacity(Integer gymCapacity) { this.gymCapacity = gymCapacity; }
 }

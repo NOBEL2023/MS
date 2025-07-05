@@ -1,4 +1,4 @@
-package com.gym.dto;
+package com.course.dto;
 
 public class GymDTO {
     private String id;
@@ -17,7 +17,7 @@ public class GymDTO {
         this.location = location;
     }
 
-    // Getters & Setters
+    // Getters et Setters
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
 
